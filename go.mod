@@ -1,4 +1,4 @@
-module main
+module github.com/AdonaIsium/httpfromtcp
 
 go 1.24.2
 

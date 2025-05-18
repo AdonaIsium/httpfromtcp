@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 
-	i "github.com/AdonaIsium/httpfromtcp/internal"
+	i "github.com/AdonaIsium/httpfromtcp/internal/request"
 )
 
 func main() {
@@ -20,12 +20,14 @@ func main() {
 			log.Fatal(err)
 		}
 		go func(c net.Conn) {
-			i.RequestFromReader(c)
-			msgChan := getLinesChannel(c)
-			for msg := range msgChan {
-				fmt.Printf("%s\n", msg)
+			req, err := i.RequestFromReader(c)
+			if err != nil {
+				fmt.Printf("received error: %v", err)
 			}
-			c.Close()
+			fmt.Printf("Request line:\n- Method: %s\n- Target: %s\n- Version: %s\nHeaders:\n", req.RequestLine.Method, req.RequestLine.RequestTarget, req.RequestLine.HttpVersion)
+			for k, v := range req.Headers {
+				fmt.Printf("- %s: %s\n", k, v)
+			}
 
 		}(conn)
 
