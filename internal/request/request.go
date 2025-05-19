@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -12,9 +13,11 @@ import (
 )
 
 type Request struct {
-	RequestLine RequestLine
-	Headers     headers.Headers
-	state       requestState
+	RequestLine    RequestLine
+	Headers        headers.Headers
+	Body           []byte
+	state          requestState
+	bodyLengthRead int
 }
 
 type RequestLine struct {
@@ -28,6 +31,7 @@ type requestState int
 const (
 	requestStateInitialized requestState = iota
 	requestStateParsingHeaders
+	requestStateParsingBody
 	requestStateDone
 )
 
@@ -40,6 +44,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	req := &Request{
 		state:   requestStateInitialized,
 		Headers: headers.NewHeaders(),
+		Body:    make([]byte, 0),
 	}
 	for req.state != requestStateDone {
 		if readToIndex >= len(buf) {
@@ -150,9 +155,11 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 	case requestStateInitialized:
 		requestLine, n, err := parseRequestLine(data)
 		if err != nil {
+			// something actually went wrong
 			return 0, err
 		}
 		if n == 0 {
+			// just need more data
 			return 0, nil
 		}
 		r.RequestLine = *requestLine
@@ -164,11 +171,31 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, err
 		}
 		if done {
-			r.state = requestStateDone
+			r.state = requestStateParsingBody
 		}
 		return n, nil
+	case requestStateParsingBody:
+		contentLenStr, ok := r.Headers.Get("Content-Length")
+		if !ok {
+			// assume that if no content-length header is present, there is no body
+			r.state = requestStateDone
+			return len(data), nil
+		}
+		contentLen, err := strconv.Atoi(contentLenStr)
+		if err != nil {
+			return 0, fmt.Errorf("malformed Content-Length: %s", err)
+		}
+		r.Body = append(r.Body, data...)
+		r.bodyLengthRead += len(data)
+		if r.bodyLengthRead > contentLen {
+			return 0, fmt.Errorf("Content-Length too large")
+		}
+		if r.bodyLengthRead == contentLen {
+			r.state = requestStateDone
+		}
+		return len(data), nil
 	case requestStateDone:
-		return 0, fmt.Errorf("error: trying to read data in done state")
+		return 0, fmt.Errorf("error: trying to read data in a done state")
 	default:
 		return 0, fmt.Errorf("unknown state")
 	}
